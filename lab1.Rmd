@@ -1,0 +1,146 @@
+---
+output: 
+  html_document:
+    code_folding: hide
+    df_print: paged
+editor_options: 
+  chunk_output_type: inline
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE)
+
+library(tidyverse)
+library(tidymodels)
+```
+
+### Read in the `train.csv` data.
+
+```{r, data}
+df <- rio::import("train.csv")
+
+```
+
+### 1. Initial Split
+
+Split the data into a training set and a testing set as two named objects. Produce the `class` type for the initial split object and the training and test sets.
+
+```{r, initial_split}
+set.seed(3000)
+df_split <- initial_split(df)
+df_train <- training(df_split)
+df_test <- testing(df_split)
+
+```
+
+### 2. Use code to show the proportion of the `train.csv` data that went to each of the training and test sets.
+
+```{r}
+# Proportion in training set
+df_split %>% 
+  training() %>% 
+  nrow() / nrow(df)
+
+# Proportion in testing set
+df_split %>% 
+  testing() %>% 
+  nrow() / nrow(df)
+```
+
+### 3. *k*-fold cross-validation
+
+Use 10-fold cross-validation to resample the training data.
+
+```{r, resample}
+set.seed(3000)
+(cv_splits <- vfold_cv(df_train))
+
+```
+
+### 4. Use `{purrr}` to add the following columns to your *k*-fold CV object:
+* *analysis_n* = the *n* of the analysis set for each fold
+* *assessment_n* = the *n* of the assessment set for each fold
+* *analysis_p* = the proportion of the analysis set for each fold
+* *assessment_p* = the proportion of the assessment set for each fold
+* *sped_p* = the proportion of students receiving special education services (`sp_ed_fg`) in the analysis and assessment sets for each fold
+
+```{r, purrr}
+# Add a column for the analysis and assessment data sets for each fold
+(cv_splits <- cv_splits %>% 
+  mutate(analysis = map(cv_splits$splits, analysis),
+         assessment = map(cv_splits$splits, assessment)))
+
+# Create a function to create proportion of students receiving spedial education services
+get_sped_p <- function(x) {
+  sped_p <- length(which(x['sp_ed_fg'] == "Y")) / nrow(x)
+  return(sped_p)
+}
+
+# Add a column for analysis & assessment n for each fold
+(cv_splits <- cv_splits %>% 
+  mutate(analysis_n = map_dbl(cv_splits$analysis, nrow),
+         assessment_n = map_dbl(cv_splits$assessment, nrow),
+         total_n = analysis_n + assessment_n,
+         analysis_p = analysis_n / total_n,
+         assessment_p = assessment_n / total_n,
+         analysis_sped_p = map_dbl(cv_splits$analysis, get_sped_p),
+         assessment_sped_p = map_dbl(cv_splits$assessment, get_sped_p)))
+
+# Ideally, I would have run both analysis()/assessment() and nrow() in the same map function, but I couldn't figure out how to do both. My work around was to just create a column with the analysis and assessment dataframes and map nrow onto those. Basically I wanted to map(cv_splits$splits, assessment %>% nrow) 
+
+# I didn't take functional programming in R, so this was a real challenge. What I came up with was probably not the most efficient/eloquent code- would love to see your solution!
+```
+
+### 5. Please demonstrate that that there are **no** common values in the `id` columns of the `assessment` data between `Fold01` & `Fold02`, and `Fold09` & `Fold10` (of your 10-fold cross-validation object).
+
+```{r}
+# Counting the number of shared ids between assessment sets from fold 1 and fold 2
+sum(cv_splits$assessment[[1]]$id == cv_splits$assessment[[2]]$id)
+
+# Counting the number of shared ids between assessment sets from fold 9 and fold 10
+sum(cv_splits$assessment[[9]]$id == cv_splits$assessment[[10]]$id)
+```
+
+### 6. Try to answer these next questions without running similar code on real data.
+
+For the following code `vfold_cv(fictional_train, v = 20)`:
+
+* What is the proportion in the analysis set for each fold? **.95**
+* What is the proportion in the assessment set for each fold? **.05**
+
+### 7. Use Monte Carlo CV to resample the training data with 20 resamples and .30 of each resample reserved for the assessment sets.
+
+```{r}
+set.seed(3000)
+
+(mc_splits <- mc_cv(df_train, prop = .7, times = 20))
+```
+
+### 8. Please demonstrate that that there **are** common values in the `id` columns of the `assessment` data between `Resample 8` & `Resample 12`, and `Resample 2` & `Resample 20`in your MC CV object.
+
+```{r}
+(mc_splits <- mc_splits %>% 
+   mutate(analysis = map(mc_splits$splits, analysis),
+          assessment = map(mc_splits$splits, assessment)))
+
+# Counting the number of shared ids between assessment sets from fold 8 and fold 12
+sum(mc_splits$assessment[[8]]$id == mc_splits$assessment[[12]]$id)
+
+# Counting the number of shared ids between assessment sets from fold 2 and fold 20
+sum(mc_splits$assessment[[2]]$id == mc_splits$assessment[[20]]$id)
+
+```
+
+### 9. You plan on doing bootstrap resampling with a training set with *n* = 500.
+
+* What is the sample size of an analysis set for a given bootstrap resample?
+**500**
+
+* What is the sample size of an assessment set for a given bootstrap resample?
+**will vary with each resample**
+
+* If each row was selected only once for an analysis set:
+  + what would be the size of the analysis set? **500**
+  + and what would be the size of the assessment set? **0**
+
